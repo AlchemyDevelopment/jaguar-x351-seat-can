@@ -1,0 +1,15 @@
+# local tools, environments and downloaded references (not ours to redistribute)
+tools/
+.venv/
+.claude/
+ref/
+ms_bus.dbc
+# capture logs can contain the seat module's VIN
+logs/
+__pycache__/
+*.pyc
+
+# blind all-ID sweeps (caused unexpected massage activation); use trigger_hunt.py instead
+door_sweep.py
+pm_sweep.py
+pm_sweep2.py
