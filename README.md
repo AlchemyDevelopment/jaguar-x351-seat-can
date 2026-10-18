@@ -152,7 +152,16 @@ Your own logs can contain your seat's VIN, so don't publish them.
 
 ## Still open
 
-- **Heating and ventilation** are probably controlled over CAN as well. Not mapped yet.
+- **Heating, cooling and ventilation need a separate module.** The seat holds only the parts: Peltier (TED) pads, temperature
+  sensors and fans. The **climate-controlled seat module** (connector C3HS03 A/B/C) is body-mounted near the front seats and
+  stays with the car. It has its own MS-CAN pair and drives the seat through C33-K / C33-C:
+  - backrest TED: K/21, K/20
+  - backrest sensor: K/10, K/9
+  - cushion TED: C/3, C/2
+  - cushion sensor: K/13, K/12
+  - fans: power K/4, return K/5, speed K/6 and K/19
+
+  Get a used module and wire it in. Don't drive the TEDs directly: they need closed-loop temperature control.
 - **Memory buttons** are wired switches on this seat (STATUS / MEMORY lines to the door switch), not CAN.
 - **The exact meaning and the minimum working value of 0x0B8** are unknown.
 
