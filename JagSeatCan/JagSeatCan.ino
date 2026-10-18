@@ -24,6 +24,15 @@
 // They are NOT verified on X351 hardware.
 
 #include "driver/twai.h"
+#include <WiFi.h>
+#include <WebServer.h>
+
+// Web control: the board runs its own Wi-Fi network; open http://192.168.4.1 on a phone joined to it
+#define WIFI_SSID "JagSeat"
+#define WIFI_PASS "jaguarseat"  // at least 8 characters; change before sharing your rig
+static WebServer web(80);
+static uint8_t last4FB6 = 0, last4FB7 = 0;
+static uint32_t last4FBMs = 0;
 
 #define CAN_TX_PIN GPIO_NUM_15
 #define CAN_RX_PIN GPIO_NUM_16
@@ -170,6 +179,9 @@ static void recordRx(const twai_message_t &m) {
   nmRx(m);
   // 0x4FB byte7 bit0 observed = 1 while the seat motor is running
   if (m.identifier == 0x4FB && !m.extd && m.data_length_code >= 8) {
+    last4FB6 = m.data[6];
+    last4FB7 = m.data[7];
+    last4FBMs = millis();
     bool on = m.data[7] & 0x01;
     if (on && !motorOn) { motorOnAt = millis(); Serial.printf("%8lu MOTOR ON\n", (unsigned long)millis()); }
     if (!on && motorOn)
@@ -290,6 +302,81 @@ static void handleCmd(char c) {
   }
 }
 
+static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>JagSeat</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;max-width:520px}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:20px 0 8px;color:#aaa;text-transform:uppercase;letter-spacing:.05em}
+.st{display:grid;grid-template-columns:1fr auto;gap:6px 12px;background:#1c1c1c;padding:12px;border-radius:10px}
+.on{color:#4ade80}.off{color:#888}.warn{color:#fbbf24}
+button{font-size:16px;padding:14px 10px;border:0;border-radius:10px;background:#2a2a2a;color:#eee;width:100%}
+button:active{background:#3a3a3a}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.go{background:#14532d}.stop{background:#7f1d1d}
+small{color:#888}
+</style></head><body>
+<h1>Jaguar seat</h1>
+<div class="st">
+<span>Seat link</span><b id="link">-</b>
+<span>Continuous movement</span><b id="en">-</b>
+<span>Massage</span><b id="ms">-</b>
+<span>Motor</span><b id="mo">-</b>
+</div>
+<h2>Massage</h2>
+<div class="row"><button class="go" onclick="m('10')">On</button><button class="stop" onclick="m('00')">Off</button></div>
+<h2>Massage variants</h2>
+<div class="grid">
+<button onclick="m('10')">10</button><button onclick="m('30')">30</button><button onclick="m('50')">50</button><button onclick="m('90')">90</button>
+<button onclick="m('11')">11</button><button onclick="m('12')">12</button><button onclick="m('14')">14</button><button onclick="m('18')">18</button>
+</div>
+<p><small>Variant effects aren't identified yet. Note what each one feels like.</small></p>
+<h2>Seat enable</h2>
+<div class="row"><button onclick="e(1)">Enable</button><button onclick="e(0)">Disable</button></div>
+<p><small>Disable stops the 0x0B8 frame. The seat stays enabled until it loses power.</small></p>
+<script>
+function q(u){return fetch(u).then(r=>r.json()).then(show).catch(()=>{})}
+function m(v){q('/api/massage?v='+v)}
+function e(v){q('/api/enable?on='+v)}
+function s(id,t,c){var x=document.getElementById(id);x.textContent=t;x.className=c}
+function show(d){
+ s('link',d.seat?'connected':'no data','' + (d.seat?'on':'warn'));
+ s('en',d.seat?(d.enabled?'yes':'inch mode'):'-',d.enabled?'on':'off');
+ s('ms',d.seat?(d.massage?'running':'off'):'-',d.massage?'on':'off');
+ s('mo',d.seat?(d.motor?'running':'idle'):'-',d.motor?'on':'off');
+}
+q('/api/status');setInterval(()=>q('/api/status'),1000);
+</script></body></html>)HTML";
+
+static void sendStatus() {
+  bool seat = last4FBMs && millis() - last4FBMs < 2000;
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+           "{\"seat\":%s,\"enabled\":%s,\"massage\":%s,\"motor\":%s,\"tx_enable\":%s}",
+           seat ? "true" : "false", (seat && !(last4FB6 & 0x04)) ? "true" : "false",
+           (seat && (last4FB6 & 0x01)) ? "true" : "false", (seat && (last4FB7 & 0x01)) ? "true" : "false",
+           txSeatEnable ? "true" : "false");
+  web.send(200, "application/json", buf);
+}
+
+static void startWeb() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(WIFI_SSID, WIFI_PASS);
+  web.on("/", [] { web.send_P(200, "text/html", PAGE); });
+  web.on("/api/status", sendStatus);
+  web.on("/api/massage", [] {
+    ensureNormal();
+    massageByte7 = (uint8_t)strtoul(web.arg("v").c_str(), nullptr, 16);
+    massageBurst = 20;
+    sendStatus();
+  });
+  web.on("/api/enable", [] {
+    if (web.arg("on") == "1") startAuto();
+    else txSeatEnable = false;
+    sendStatus();
+  });
+  web.begin();
+  Serial.printf(">> web: join Wi-Fi \"%s\" and open http://%s\n", WIFI_SSID, WiFi.softAPIP().toString().c_str());
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);  // never block the CAN loop when no PC is reading the USB port
@@ -298,9 +385,11 @@ void setup() {
   Serial.println("cmds: e=seat-enable k/K=massage on/off i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status p=ids v=verbose");
   startDriver(true);
   if (AUTO_RUN) startAuto();
+  startWeb();
 }
 
 void loop() {
+  web.handleClient();
   // "t<ID> <hex bytes>" sends one raw frame (e.g. "t7DF 0219028F00000000"); anything else is single-letter commands
   static char line[48];
   static int lineLen = 0;

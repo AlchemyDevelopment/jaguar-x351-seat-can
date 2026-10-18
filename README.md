@@ -121,6 +121,16 @@ To try any value, send `M<hex>` over serial (e.g. `M30`). `M00` or `K` stops the
    - `n` toggle the network partner
    - `k` / `K` massage on / off, `M<hex>` massage with any byte-7 value
 
+## Web control
+
+The firmware also runs its own Wi-Fi network. Join **`JagSeat`** (password `jaguarseat`; change `WIFI_PASS` in the sketch) and
+open **http://192.168.4.1**. The page shows live seat status (link, continuous movement, massage, motor), plus massage
+on/off, the massage variants and seat-enable on/off. The same actions are available as a small API:
+
+- `/api/status`
+- `/api/massage?v=10` (or `v=00` for off)
+- `/api/enable?on=1`
+
 ## Files in this repo
 
 | File | What it does |
