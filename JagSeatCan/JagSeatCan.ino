@@ -26,6 +26,10 @@
 #include "driver/twai.h"
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
+#if __has_include("wifi_secrets.h")
+#include "wifi_secrets.h"  // defines HOME_SSID / HOME_PASS; git-ignored, copy wifi_secrets.example.h
+#endif
 
 // Web control: the board runs its own Wi-Fi network; open http://192.168.4.1 on a phone joined to it
 #define WIFI_SSID "JagSeat"
@@ -370,8 +374,15 @@ static void sendStatus() {
 }
 
 static void startWeb() {
+#ifdef HOME_SSID
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.begin(HOME_SSID, HOME_PASS);  // no waiting here: the CAN loop must start right away
+#else
   WiFi.mode(WIFI_AP);
+#endif
   WiFi.softAP(WIFI_SSID, WIFI_PASS);
+  MDNS.begin("jagseat");
+  MDNS.addService("http", "tcp", 80);
   web.on("/", [] { web.send_P(200, "text/html", PAGE); });
   web.on("/api/status", sendStatus);
   web.on("/api/massage", [] {
@@ -400,8 +411,22 @@ void setup() {
   startWeb();
 }
 
+static void reportHomeWifi() {
+#ifdef HOME_SSID
+  static bool wasUp = false;
+  bool up = WiFi.status() == WL_CONNECTED;
+  if (up != wasUp) {
+    wasUp = up;
+    if (up) Serial.printf(">> web: on home Wi-Fi \"%s\": open http://jagseat.local or http://%s\n", HOME_SSID,
+                          WiFi.localIP().toString().c_str());
+    else Serial.println(">> web: home Wi-Fi lost, reconnecting");
+  }
+#endif
+}
+
 void loop() {
   web.handleClient();
+  reportHomeWifi();
   // "t<ID> <hex bytes>" sends one raw frame (e.g. "t7DF 0219028F00000000"); anything else is single-letter commands
   static char line[48];
   static int lineLen = 0;

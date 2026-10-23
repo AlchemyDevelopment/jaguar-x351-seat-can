@@ -13,3 +13,6 @@ __pycache__/
 door_sweep.py
 pm_sweep.py
 pm_sweep2.py
+
+# home Wi-Fi credentials for the firmware
+JagSeatCan/wifi_secrets.h

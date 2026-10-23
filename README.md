@@ -133,7 +133,12 @@ massage on or off, and `e` toggles seat-enable.
 
 ## Web control (Wi-Fi)
 
-The firmware also runs its own Wi-Fi network. Join **`JagSeat`** (password `jaguarseat`; change `WIFI_PASS` in the sketch) and
+**On your home Wi-Fi:** copy `JagSeatCan/wifi_secrets.example.h` to `JagSeatCan/wifi_secrets.h`, fill in your network
+name and password, and flash again. The board joins your network, so your phone stays on it, and the page is at
+**http://jagseat.local**. If that name doesn't resolve on your phone, use the IP the board prints on the serial port.
+`wifi_secrets.h` is git-ignored, so your password never ends up in the repo.
+
+**On its own network:** the firmware also always runs its own Wi-Fi network. Join **`JagSeat`** (password `jaguarseat`; change `WIFI_PASS` in the sketch) and
 open **http://192.168.4.1**. The page shows live seat status (link, continuous movement, massage, motor), plus massage
 on/off, the massage variants and seat-enable on/off. The same actions are available as a small API:
 
