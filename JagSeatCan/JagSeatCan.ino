@@ -248,6 +248,8 @@ static void startAuto() {
   Serial.println(">> AUTO: NM partner + seat-enable 0x0B8 running");
 }
 
+static void statusJson(char *buf, size_t len);
+
 static void handleCmd(char c) {
   switch (c) {
     case 'k':
@@ -292,6 +294,12 @@ static void handleCmd(char c) {
       Serial.println(">> all transmit stopped");
       break;
     case 's': printStatus(); break;
+    case 'j': {  // one-line JSON status for the USB dashboard
+      char buf[160];
+      statusJson(buf, sizeof(buf));
+      Serial.printf("J %s\n", buf);
+      break;
+    }
     case 'p': printTable(); break;
     case 'v':
       verbose = !verbose;
@@ -346,14 +354,18 @@ function show(d){
 q('/api/status');setInterval(()=>q('/api/status'),1000);
 </script></body></html>)HTML";
 
-static void sendStatus() {
+static void statusJson(char *buf, size_t len) {
   bool seat = last4FBMs && millis() - last4FBMs < 2000;
-  char buf[160];
-  snprintf(buf, sizeof(buf),
+  snprintf(buf, len,
            "{\"seat\":%s,\"enabled\":%s,\"massage\":%s,\"motor\":%s,\"tx_enable\":%s}",
            seat ? "true" : "false", (seat && !(last4FB6 & 0x04)) ? "true" : "false",
            (seat && (last4FB6 & 0x01)) ? "true" : "false", (seat && (last4FB7 & 0x01)) ? "true" : "false",
            txSeatEnable ? "true" : "false");
+}
+
+static void sendStatus() {
+  char buf[160];
+  statusJson(buf, sizeof(buf));
   web.send(200, "application/json", buf);
 }
 
@@ -382,7 +394,7 @@ void setup() {
   Serial.setTxTimeoutMs(0);  // never block the CAN loop when no PC is reading the USB port
   delay(1500);
   Serial.println("\nJagSeatCan - X351 seat MS-CAN bench emulator (125k, TX15/RX16)");
-  Serial.println("cmds: e=seat-enable k/K=massage on/off i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status p=ids v=verbose");
+  Serial.println("cmds: e=seat-enable k/K=massage on/off i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status j=json-status p=ids v=verbose");
   startDriver(true);
   if (AUTO_RUN) startAuto();
   startWeb();

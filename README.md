@@ -121,7 +121,17 @@ To try any value, send `M<hex>` over serial (e.g. `M30`). `M00` or `K` stops the
    - `n` toggle the network partner
    - `k` / `K` massage on / off, `M<hex>` massage with any byte-7 value
 
-## Web control
+## USB dashboard (no Wi-Fi)
+
+Open **`dashboard.html`** in Chrome or Edge on the PC the ESP32 is plugged into. Click **Connect to ESP32** and pick
+its COM port. The page talks to the board over USB (Web Serial), so you don't need to join any Wi-Fi network. It shows the
+same live status and buttons as the Wi-Fi page, plus the serial log. Close the Arduino serial monitor and the Python
+scripts first, because only one program can use the COM port at a time.
+
+Under the hood it uses the firmware's serial commands: `j` returns one `J {...}` JSON status line, `M10` / `M00` turns the
+massage on or off, and `e` toggles seat-enable.
+
+## Web control (Wi-Fi)
 
 The firmware also runs its own Wi-Fi network. Join **`JagSeat`** (password `jaguarseat`; change `WIFI_PASS` in the sketch) and
 open **http://192.168.4.1**. The page shows live seat status (link, continuous movement, massage, motor), plus massage
@@ -145,6 +155,7 @@ on/off, the massage variants and seat-enable on/off. The same actions are availa
 | `trigger_hunt.py` | Sends test payloads to groups of IDs and **stops at the first change** in the seat's status |
 | `massage_bisect.py` | Narrows a hit from `trigger_hunt.py` down to one ID, switching the massage off after each hit |
 | `hold_frame.py` | Keeps sending one frame while you test the switches |
+| `dashboard.html` | USB dashboard for massage and seat status. Open it in Chrome or Edge; no Wi-Fi needed |
 
 All scripts expect the board on `COM5`. Edit `PORT` at the top of each script if yours differs.
 Your own logs can contain your seat's VIN, so don't publish them.

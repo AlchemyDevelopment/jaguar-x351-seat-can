@@ -1,0 +1,85 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>JagSeat USB</title>
+<!-- USB dashboard: open this file in Chrome or Edge on the PC the ESP32 is plugged into. No Wi-Fi needed (Web Serial). -->
+<style>
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;max-width:520px}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:20px 0 8px;color:#aaa;text-transform:uppercase;letter-spacing:.05em}
+.st{display:grid;grid-template-columns:1fr auto;gap:6px 12px;background:#1c1c1c;padding:12px;border-radius:10px}
+.on{color:#4ade80}.off{color:#888}.warn{color:#fbbf24}
+button{font-size:16px;padding:14px 10px;border:0;border-radius:10px;background:#2a2a2a;color:#eee;width:100%}
+button:active{background:#3a3a3a}button:disabled{opacity:.4}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.go{background:#14532d}.stop{background:#7f1d1d}
+small{color:#888}#log{background:#0a0a0a;color:#9ca3af;font:12px monospace;height:140px;overflow:auto;padding:8px;border-radius:8px;white-space:pre-wrap}
+</style></head><body>
+<h1>Jaguar seat (USB)</h1>
+<div class="row"><button id="conn" class="go" onclick="connect()">Connect to ESP32</button><button id="disc" onclick="disconnect()" disabled>Disconnect</button></div>
+<p><small id="hint">Click Connect and pick the ESP32's COM port. Close Arduino's serial monitor and the Python scripts first, because only one program can use the port at a time.</small></p>
+<div class="st">
+<span>USB</span><b id="usb" class="off">not connected</b>
+<span>Seat link</span><b id="link">-</b>
+<span>Continuous movement</span><b id="en">-</b>
+<span>Massage</span><b id="ms">-</b>
+<span>Motor</span><b id="mo">-</b>
+</div>
+<h2>Massage</h2>
+<div class="row"><button class="go" onclick="m('10')">On</button><button class="stop" onclick="m('00')">Off</button></div>
+<h2>Massage variants</h2>
+<div class="grid">
+<button onclick="m('10')">10</button><button onclick="m('30')">30</button><button onclick="m('50')">50</button><button onclick="m('90')">90</button>
+<button onclick="m('11')">11</button><button onclick="m('12')">12</button><button onclick="m('14')">14</button><button onclick="m('18')">18</button>
+</div>
+<p><small>Variant effects aren't identified yet. Note what each one feels like.</small></p>
+<h2>Seat enable</h2>
+<div class="row"><button onclick="e(1)">Enable</button><button onclick="e(0)">Disable</button></div>
+<p><small>Disable stops the 0x0B8 frame. The seat stays enabled until it loses power.</small></p>
+<h2>Serial log</h2>
+<div id="log"></div>
+<script>
+var port, writer, reader, last = {}, poll;
+function s(id,t,c){var x=document.getElementById(id);x.textContent=t;x.className=c}
+var lastLine='',rep=0;
+function log(t){var l=document.getElementById('log');
+ if(t===lastLine){rep++;l.textContent=l.textContent.replace(/( \(x\d+\))?\n$/,' (x'+(rep+1)+')\n');return}  // collapse repeats
+ lastLine=t;rep=0;l.textContent+=t+'\n';if(l.textContent.length>20000)l.textContent=l.textContent.slice(-10000);l.scrollTop=l.scrollHeight}
+function send(t){if(writer)writer.write(new TextEncoder().encode(t+'\n')).catch(()=>{})}
+function m(v){send('M'+v)}
+function e(on){if(!!last.tx_enable!==!!on)send('e')}  // 'e' toggles, so only send it when the state differs
+function show(d){
+ last=d;
+ s('link',d.seat?'connected':'no data',d.seat?'on':'warn');
+ s('en',d.seat?(d.enabled?'yes':'inch mode'):'-',d.enabled?'on':'off');
+ s('ms',d.seat?(d.massage?'running':'off'):'-',d.massage?'on':'off');
+ s('mo',d.seat?(d.motor?'running':'idle'):'-',d.motor?'on':'off');
+}
+async function connect(){
+ if(!('serial' in navigator)){alert('This browser has no Web Serial. Use Chrome or Edge on a PC.');return}
+ try{port=await navigator.serial.requestPort();await port.open({baudRate:115200})}catch(err){log('!! '+err.message);return}
+ writer=port.writable.getWriter();
+ s('usb','connected','on');document.getElementById('conn').disabled=true;document.getElementById('disc').disabled=false;
+ poll=setInterval(()=>send('j'),1000);
+ read();
+}
+async function read(){
+ var dec=new TextDecoder(),buf='';
+ while(port&&port.readable){
+  var r=reader=port.readable.getReader();
+  try{
+   for(;;){var x=await r.read();if(x.done)break;buf+=dec.decode(x.value);
+    var i;while((i=buf.indexOf('\n'))>=0){var line=buf.slice(0,i).trim();buf=buf.slice(i+1);
+     if(line.startsWith('J {')){try{show(JSON.parse(line.slice(2)))}catch(_){}}
+     else if(line)log(line)}}
+  }catch(err){log('!! '+err.message)}finally{r.releaseLock()}
+  if(!writer)break;
+ }
+}
+async function disconnect(){
+ clearInterval(poll);
+ var p=port;port=null;
+ try{writer.releaseLock()}catch(_){}writer=null;
+ try{await reader.cancel()}catch(_){}
+ try{await p.close()}catch(_){}
+ s('usb','not connected','off');['link','en','ms','mo'].forEach(id=>s(id,'-',''));
+ document.getElementById('conn').disabled=false;document.getElementById('disc').disabled=true;
+}
+navigator.serial&&navigator.serial.addEventListener('disconnect',()=>{if(port)disconnect()});
+</script></body></html>
