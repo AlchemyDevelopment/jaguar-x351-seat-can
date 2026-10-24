@@ -180,23 +180,35 @@ def run_gui(link):
     f = card("Cycle all programs")
     crow = tk.Frame(f, bg=CARD)
     crow.pack(fill="x")
-    secs = tk.StringVar(value="30")
-    opt = tk.OptionMenu(crow, secs, "15", "30", "60", "120", "300")
-    opt.configure(bg=CARD, fg=TX, activebackground=LINE, activeforeground=TX, relief="flat", highlightthickness=1,
-                  highlightbackground=LINE, font=UI, width=4)
-    opt["menu"].configure(bg=CARD, fg=TX, font=UI)
-    opt.pack(side="left")
-    tk.Label(crow, text="s", bg=CARD, fg=MUTE, font=UI).pack(side="left", padx=(4, 10))
-    cyc = button(crow, "Start cycle", lambda: link.cycle(0 if state["d"].get("cycle") else int(secs.get())))
-    cyc.pack(side="left", fill="x", expand=True)
+    pick = {"s": 30}
+    segs = {}
+
+    def interval(v):  # tapping a new interval while cycling applies it now
+        pick["s"] = v
+        paint_segs()
+        if state["d"].get("cycle"):
+            work(lambda: link.cycle(v))
+
+    def paint_segs():
+        live = bool(state["d"].get("cycle"))
+        for v, b in segs.items():
+            sel = v == pick["s"]
+            b.configure(bg=(ACT if live else LINE) if sel else CARD, fg=(GOLD2 if live else TX) if sel else MUTE)
+
+    for i, (v, label) in enumerate([(15, "15s"), (30, "30s"), (60, "1m"), (120, "2m"), (300, "5m")]):
+        b = tk.Button(crow, text=label, command=lambda v=v: interval(v), relief="flat", bd=0, highlightthickness=0,
+                      activebackground=LINE, activeforeground=TX, font=UI, pady=7, cursor="hand2")
+        b.grid(row=0, column=i, sticky="ew", padx=1)
+        crow.columnconfigure(i, weight=1)
+        segs[v] = b
+    cyc = button(f, "Start cycle", lambda: link.cycle(0 if state["d"].get("cycle") else pick["s"]))
+    cyc.pack(fill="x", pady=(8, 0))
 
     f = card("Seat")
     srow = tk.Frame(f, bg=CARD)
     srow.pack(fill="x")
     seat = tk.Label(srow, text="-", bg=CARD, fg=MUTE, font=UI, anchor="w")
     seat.pack(side="left", fill="x", expand=True)
-    button(srow, "Enable", lambda: link.enable(True)).pack(side="left", padx=3)
-    button(srow, "Disable", lambda: link.enable(False)).pack(side="left")
     fw = tk.Label(root, text="", bg=BG, fg=MUTE, font=("Segoe UI", 8))
     fw.pack(anchor="w", pady=(6, 0))
 
@@ -219,7 +231,11 @@ def run_gui(link):
         for pv, b in progs.items():
             on = bool(run and pv == v)
             b.configure(bg=ACT if on else CARD, fg=GOLD2 if on else TX, highlightbackground=GOLD if on else LINE)
-        cyc.configure(text="Stop cycle" if d.get("cycle") else "Start cycle", fg=GOLD2 if d.get("cycle") else TX)
+        cyc.configure(text="Stop cycle" if d.get("cycle") else "Start cycle", fg=GOLD2 if d.get("cycle") else TX,
+                      highlightbackground=GOLD if d.get("cycle") else LINE)
+        if d.get("cycle"):
+            pick["s"] = d["cycle"]
+        paint_segs()
         seat.configure(text="-" if not ok else "continuous movement" if d.get("enabled") else "inch mode",
                        fg=GREEN if ok and d.get("enabled") else AMBER if ok else MUTE)
         fw.configure(text=f"firmware {d.get('fw', '?')}" + (f"   |   {d['ip']}" if d.get("ip") else ""))

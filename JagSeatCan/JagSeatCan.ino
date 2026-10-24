@@ -27,6 +27,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <Preferences.h>
+#include <esp_system.h>
 #if __has_include("wifi_secrets.h")
 #include "wifi_secrets.h"  // defines HOME_SSID / HOME_PASS; git-ignored, copy wifi_secrets.example.h
 #endif
@@ -36,7 +38,7 @@
 #define WIFI_PASS "jaguarseat"  // at least 8 characters; change before sharing your rig
 static WebServer web(80);
 // shown on the web page and USB dashboard; bump it whenever you flash a change
-#define FW_VERSION "1.5"
+#define FW_VERSION "1.8"
 static const char FW_BUILD[] = FW_VERSION " (built " __DATE__ " " __TIME__ ")";
 static uint8_t last4FB6 = 0, last4FB7 = 0;
 static uint32_t last4FBMs = 0;
@@ -54,6 +56,9 @@ static bool busOffRetry = false;
 
 // 0x4CB byte7 bit4 (0x10) = massage request: 0x10 starts it (it keeps running), 0x00 stops it (bench-confirmed)
 static int massageBurst = 0;  // frames left to send
+// the seat only starts massage on an off->on change of byte7 (like a button press), so a start from off is
+// preceded by a few 00 frames; switching programs while it runs needs no gap
+static int massagePreOff = 0;
 static uint8_t massageByte7 = 0;
 static uint32_t lastMassage = 0;
 // cycle mode: the board itself steps through the massage programs on a timer (no PC or phone needed)
@@ -61,6 +66,8 @@ static const uint8_t PROGRAMS[] = {0x10, 0x30, 0x50, 0x90, 0x11, 0x12, 0x14, 0x1
 static const int N_PROGRAMS = sizeof(PROGRAMS);
 static uint32_t cycleMs = 0, lastCycle = 0;  // cycleMs 0 = cycle off
 static int cycleIdx = 0;
+static uint32_t massageOffSince = 0;  // cycle watchdog: when the seat started reporting massage off
+static Preferences prefs;            // the cycle setting survives restarts and power loss
 
 static bool txIgnition = false;
 static bool txDoorFrame = false;
@@ -266,10 +273,15 @@ static void setMassage(uint8_t v, bool fromCycle = false) {
   ensureNormal();
   massageByte7 = v;
   massageBurst = 20;  // 20 x 50 ms = 1 s
-  if (!fromCycle) cycleMs = 0;  // picking a program or switching off ends the cycle
+  massagePreOff = (v && !(last4FB6 & 0x01)) ? 10 : 0;  // seat reports massage off: 0.5 s of 00 first
+  if (!fromCycle && cycleMs) {  // picking a program or switching off ends the cycle
+    cycleMs = 0;
+    prefs.putUInt("cycle", 0);
+  }
 }
 
 static void startCycle(uint32_t secs) {
+  prefs.putUInt("cycle", secs ? max<uint32_t>(secs, 5) : 0);
   if (secs == 0) { cycleMs = 0; return; }
   cycleMs = max<uint32_t>(secs, 5) * 1000;
   cycleIdx = 0;
@@ -338,16 +350,31 @@ static void handleCmd(char c) {
 
 #include "page_html.h"  // generated from dashboard.html by make_page.py; edit the HTML, then run it
 
+static const char *resetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "crash";
+    case ESP_RST_INT_WDT: case ESP_RST_TASK_WDT: case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_USB: return "usb";
+    case ESP_RST_EXT: return "reset-pin";
+    default: return "other";
+  }
+}
+
 static void statusJson(char *buf, size_t len) {
   bool seat = last4FBMs && millis() - last4FBMs < 2000;
   snprintf(buf, len,
            "{\"seat\":%s,\"enabled\":%s,\"massage\":%s,\"motor\":%s,\"tx_enable\":%s,"
-           "\"fw\":\"%s\",\"variant\":\"%02X\",\"ip\":\"%s\",\"cycle\":%lu,\"cycle_next\":%lu}",
+           "\"fw\":\"%s\",\"variant\":\"%02X\",\"ip\":\"%s\",\"cycle\":%lu,\"cycle_next\":%lu,"
+           "\"up\":%lu,\"reset\":\"%s\"}",
            seat ? "true" : "false", (seat && !(last4FB6 & 0x04)) ? "true" : "false",
            (seat && (last4FB6 & 0x01)) ? "true" : "false", (seat && (last4FB7 & 0x01)) ? "true" : "false",
            txSeatEnable ? "true" : "false", FW_BUILD, massageByte7,
            WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "", (unsigned long)(cycleMs / 1000),
-           (unsigned long)(cycleMs ? (cycleMs - min(cycleMs, millis() - lastCycle)) / 1000 : 0));
+           (unsigned long)(cycleMs ? (cycleMs - min(cycleMs, millis() - lastCycle)) / 1000 : 0),
+           (unsigned long)(millis() / 1000), resetReason());
 }
 
 static void sendStatus() {
@@ -377,8 +404,7 @@ static void startWeb() {
     sendStatus();
   });
   web.on("/api/enable", [] {
-    if (web.arg("on") == "1") startAuto();
-    else txSeatEnable = false;
+    startAuto();  // continuous movement is always on; only the serial 'e'/'x' commands can stop it (bench testing)
     sendStatus();
   });
   web.begin();
@@ -388,13 +414,17 @@ static void startWeb() {
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);  // never block the CAN loop when no PC is reading the USB port
+  startDriver(true);
+  if (AUTO_RUN) startAuto();  // seat-enable first, before anything slow, so a restart never leaves the seat waiting
   delay(1500);
   Serial.println("\nJagSeatCan - X351 seat MS-CAN bench emulator (125k, TX15/RX16)");
   Serial.printf("firmware %s\n", FW_BUILD);
   Serial.println("cmds: e=seat-enable k/K=massage on/off M<hex>=program C<secs>=cycle i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status j=json-status p=ids v=verbose");
-  startDriver(true);
-  if (AUTO_RUN) startAuto();
+  Serial.printf("reset reason: %s\n", resetReason());
   startWeb();
+  prefs.begin("jagseat");
+  uint32_t savedCycle = prefs.getUInt("cycle", 0);
+  if (savedCycle) startCycle(savedCycle);  // resume cycling after a restart; the watchdog re-sends once the seat is up
 }
 
 static void reportHomeWifi() {
@@ -481,10 +511,20 @@ void loop() {
       cycleIdx = (cycleIdx + 1) % N_PROGRAMS;
       setMassage(PROGRAMS[cycleIdx], true);
     }
-    if (massageBurst > 0 && now - lastMassage >= 50) {
+    // cycle watchdog: if the seat reports massage off for 3 s while cycling, start the current program again
+    bool seatUp = last4FBMs && now - last4FBMs < 500;
+    if (cycleMs && massageBurst == 0 && massagePreOff == 0 && seatUp && !(last4FB6 & 0x01)) {
+      if (!massageOffSince) massageOffSince = now;
+      else if (now - massageOffSince >= 3000) { massageOffSince = 0; setMassage(PROGRAMS[cycleIdx], true); }
+    } else {
+      massageOffSince = 0;
+    }
+    if ((massagePreOff > 0 || massageBurst > 0) && now - lastMassage >= 50) {
       lastMassage = now;
-      massageBurst--;
-      uint8_t d[8] = {0, 0, 0, 0, 0, 0, 0, massageByte7};
+      uint8_t b = 0;
+      if (massagePreOff > 0) massagePreOff--;
+      else { massageBurst--; b = massageByte7; }
+      uint8_t d[8] = {0, 0, 0, 0, 0, 0, 0, b};
       sendFrame(0x4CB, d);
     }
     if (txIgnition && now - lastIgn >= 20) { lastIgn = now; sendIgnition(); }

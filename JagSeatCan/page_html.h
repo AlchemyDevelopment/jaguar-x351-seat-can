@@ -38,9 +38,10 @@ button:hover{border-color:#3b4046}button:active{transform:scale(.97)}button:disa
 .progs button{padding:12px 4px}.progs button i{display:block;font-style:normal;color:var(--mute);font-size:11px;margin-top:2px}
 .progs button.act{border-color:var(--gold);background:linear-gradient(180deg,#2a2418,#17140e);color:var(--gold2)}
 .progs button.act i{color:var(--gold)}
-.cyc{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.cyc select{font:inherit;color:var(--tx);background:#111316;border:1px solid var(--line);border-radius:12px;padding:12px}
-.cyc button{flex:1}.cyc button.live{border-color:var(--gold);color:var(--gold2)}
+.seg{display:grid;grid-template-columns:repeat(5,1fr);background:#0f1113;border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;border-radius:9px;background:transparent;padding:9px 2px;color:var(--mute);font-size:14px}
+.seg button.sel{background:#24272b;color:var(--tx)}.seg button.sel.live{background:linear-gradient(180deg,#2a2418,#17140e);color:var(--gold2)}
+#cyc.live{border-color:var(--gold);color:var(--gold2)}
 .bar{height:4px;background:#0f1113;border-radius:4px;margin-top:12px;overflow:hidden}
 .bar div{height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold2));transition:width .9s linear}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -73,20 +74,20 @@ details summary{cursor:pointer;color:var(--mute);font-size:12px;letter-spacing:.
 Effects aren't identified yet; note what each one feels like.</p></div>
 
 <div class="card"><h2>Cycle all programs</h2>
-<div class="cyc"><select id="secs"><option value="15">every 15 s</option><option value="30" selected>every 30 s</option>
-<option value="60">every 1 min</option><option value="120">every 2 min</option><option value="300">every 5 min</option></select>
-<button id="cyc" onclick="cycle()">Start cycle</button></div>
+<div class="seg" id="secs"></div>
+<button id="cyc" onclick="cycle()" style="margin-top:8px">Start cycle</button>
 <div class="bar"><div id="bar"></div></div></div>
 
 <div class="card"><details><summary>Seat &amp; system</summary>
-<div class="row" style="margin-top:12px"><button onclick="enable(1)">Enable seat</button><button onclick="enable(0)">Disable</button></div>
-<p class="note">Disable stops the 0x0B8 frame. The seat stays enabled until it loses power.</p>
-<div class="meta"><span>Firmware</span><b id="fw">-</b><span>Home Wi-Fi</span><b id="ip">-</b><span>Link</span><b id="via">-</b></div>
+<p class="note" style="margin-top:12px">Continuous movement is always on: the board sends the 0x0B8 enable frame from boot.</p>
+<button onclick="enable(1)" id="reen" style="display:none">Re-enable continuous movement</button>
+<div class="meta"><span>Firmware</span><b id="fw">-</b><span>Up since</span><b id="up">-</b><span>Home Wi-Fi</span><b id="ip">-</b><span>Link</span><b id="via">-</b></div>
 <div id="log" class="usb"></div></details></div>
 </div>
 <script>
 var PROGS=['10','30','50','90','11','12','14','18'],last={},usb=location.protocol==='file:';
-var $=id=>document.getElementById(id);
+var $=id=>document.getElementById(id),SECS=[[15,'15s'],[30,'30s'],[60,'1m'],[120,'2m'],[300,'5m']],pick=30;
+$('secs').innerHTML=SECS.map(x=>'<button data-s="'+x[0]+'" onclick="interval('+x[0]+')">'+x[1]+'</button>').join('');
 $('progs').innerHTML=PROGS.map((v,i)=>'<button data-v="'+v+'" onclick="prog(\''+v+'\')">P'+(i+1)+'<i>'+v+'</i></button>').join('');
 if(usb)document.body.classList.add('usbmode');
 $('via').textContent=usb?'USB (Web Serial)':'Wi-Fi ('+location.host+')';
@@ -100,7 +101,10 @@ function api(name,arg){
 }
 function prog(v){api('massage','v='+v)}
 function toggle(){prog(last.seat&&last.massage?'00':(known(last)?last.variant:'10'))}
-function cycle(){api('cycle','s='+(last.cycle?0:$('secs').value))}
+function cycle(){api('cycle','s='+(last.cycle?0:pick))}
+function interval(v){pick=v;segs();if(last.cycle)api('cycle','s='+v)}  // tapping a new interval while cycling applies it now
+function segs(){document.querySelectorAll('#secs button').forEach(b=>{b.classList.toggle('sel',+b.dataset.s===pick);
+ b.classList.toggle('live',!!last.cycle)})}
 function enable(on){api('enable','on='+on)}
 function known(d){return d.variant&&d.variant!=='00'}
 function set(id,t,c){$(id).textContent=t;$(id).className=c||''}
@@ -117,8 +121,11 @@ function show(d){
   k?'0x4CB byte7 = '+d.variant:'Program unknown (started before the ESP32 restarted)';
  document.querySelectorAll('#progs button').forEach(b=>b.classList.toggle('act',!!(run&&k&&b.dataset.v===d.variant)));
  $('cyc').textContent=d.cycle?'Stop cycle':'Start cycle';$('cyc').classList.toggle('live',!!d.cycle);
+ if(d.cycle)pick=d.cycle;segs();
  $('bar').style.width=d.cycle?(100*(d.cycle-d.cycle_next)/d.cycle)+'%':'0';
- $('fw').textContent=d.fw||'-';set('ip',d.ip||'not connected',d.ip?'on':'off');
+ $('reen').style.display=d.tx_enable?'none':'block';
+ $('fw').textContent=d.fw||'-';
+ if(d.up!==undefined)$('up').textContent=Math.floor(d.up/60)+' min ago ('+d.reset+')';set('ip',d.ip||'not connected',d.ip?'on':'off');
 }
 if(!usb){api('status');setInterval(()=>api('status'),1000)}else show(null);
 
