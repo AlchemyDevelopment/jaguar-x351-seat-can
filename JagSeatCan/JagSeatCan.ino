@@ -35,6 +35,9 @@
 #define WIFI_SSID "JagSeat"
 #define WIFI_PASS "jaguarseat"  // at least 8 characters; change before sharing your rig
 static WebServer web(80);
+// shown on the web page and USB dashboard; bump it whenever you flash a change
+#define FW_VERSION "1.3"
+static const char FW_BUILD[] = FW_VERSION " (built " __DATE__ " " __TIME__ ")";
 static uint8_t last4FB6 = 0, last4FB7 = 0;
 static uint32_t last4FBMs = 0;
 
@@ -299,7 +302,7 @@ static void handleCmd(char c) {
       break;
     case 's': printStatus(); break;
     case 'j': {  // one-line JSON status for the USB dashboard
-      char buf[160];
+      char buf[320];
       statusJson(buf, sizeof(buf));
       Serial.printf("J %s\n", buf);
       break;
@@ -332,6 +335,9 @@ small{color:#888}
 <span>Continuous movement</span><b id="en">-</b>
 <span>Massage</span><b id="ms">-</b>
 <span>Motor</span><b id="mo">-</b>
+<span>Massage variant sent</span><b id="va">-</b>
+<span>Firmware</span><b id="fw">-</b>
+<span>Home Wi-Fi</span><b id="ip">-</b>
 </div>
 <h2>Massage</h2>
 <div class="row"><button class="go" onclick="m('10')">On</button><button class="stop" onclick="m('00')">Off</button></div>
@@ -354,6 +360,9 @@ function show(d){
  s('en',d.seat?(d.enabled?'yes':'inch mode'):'-',d.enabled?'on':'off');
  s('ms',d.seat?(d.massage?'running':'off'):'-',d.massage?'on':'off');
  s('mo',d.seat?(d.motor?'running':'idle'):'-',d.motor?'on':'off');
+ s('va',d.variant==='00'?'off (00)':d.variant,d.massage?'on':'off');
+ s('fw',d.fw,'');
+ s('ip',d.ip||'not connected',d.ip?'on':'off');
 }
 q('/api/status');setInterval(()=>q('/api/status'),1000);
 </script></body></html>)HTML";
@@ -361,14 +370,16 @@ q('/api/status');setInterval(()=>q('/api/status'),1000);
 static void statusJson(char *buf, size_t len) {
   bool seat = last4FBMs && millis() - last4FBMs < 2000;
   snprintf(buf, len,
-           "{\"seat\":%s,\"enabled\":%s,\"massage\":%s,\"motor\":%s,\"tx_enable\":%s}",
+           "{\"seat\":%s,\"enabled\":%s,\"massage\":%s,\"motor\":%s,\"tx_enable\":%s,"
+           "\"fw\":\"%s\",\"variant\":\"%02X\",\"ip\":\"%s\"}",
            seat ? "true" : "false", (seat && !(last4FB6 & 0x04)) ? "true" : "false",
            (seat && (last4FB6 & 0x01)) ? "true" : "false", (seat && (last4FB7 & 0x01)) ? "true" : "false",
-           txSeatEnable ? "true" : "false");
+           txSeatEnable ? "true" : "false", FW_BUILD, massageByte7,
+           WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "");
 }
 
 static void sendStatus() {
-  char buf[160];
+  char buf[320];
   statusJson(buf, sizeof(buf));
   web.send(200, "application/json", buf);
 }
@@ -405,6 +416,7 @@ void setup() {
   Serial.setTxTimeoutMs(0);  // never block the CAN loop when no PC is reading the USB port
   delay(1500);
   Serial.println("\nJagSeatCan - X351 seat MS-CAN bench emulator (125k, TX15/RX16)");
+  Serial.printf("firmware %s\n", FW_BUILD);
   Serial.println("cmds: e=seat-enable k/K=massage on/off i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status j=json-status p=ids v=verbose");
   startDriver(true);
   if (AUTO_RUN) startAuto();

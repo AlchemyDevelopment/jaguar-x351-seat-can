@@ -20,6 +20,9 @@ small{color:#888}#log{background:#0a0a0a;color:#9ca3af;font:12px monospace;heigh
 <span>Continuous movement</span><b id="en">-</b>
 <span>Massage</span><b id="ms">-</b>
 <span>Motor</span><b id="mo">-</b>
+<span>Massage variant sent</span><b id="va">-</b>
+<span>Firmware</span><b id="fw">-</b>
+<span>Home Wi-Fi</span><b id="ip">-</b>
 </div>
 <h2>Massage</h2>
 <div class="row"><button class="go" onclick="m('10')">On</button><button class="stop" onclick="m('00')">Off</button></div>
@@ -50,6 +53,9 @@ function show(d){
  s('en',d.seat?(d.enabled?'yes':'inch mode'):'-',d.enabled?'on':'off');
  s('ms',d.seat?(d.massage?'running':'off'):'-',d.massage?'on':'off');
  s('mo',d.seat?(d.motor?'running':'idle'):'-',d.motor?'on':'off');
+ s('va',d.variant==='00'?'off (00)':d.variant,d.massage?'on':'off');
+ s('fw',d.fw,'');
+ s('ip',d.ip||'not connected',d.ip?'on':'off');
 }
 async function connect(){
  if(!('serial' in navigator)){alert('This browser has no Web Serial. Use Chrome or Edge on a PC.');return}
@@ -78,7 +84,7 @@ async function disconnect(){
  try{writer.releaseLock()}catch(_){}writer=null;
  try{await reader.cancel()}catch(_){}
  try{await p.close()}catch(_){}
- s('usb','not connected','off');['link','en','ms','mo'].forEach(id=>s(id,'-',''));
+ s('usb','not connected','off');['link','en','ms','mo','va','fw','ip'].forEach(id=>s(id,'-',''));
  document.getElementById('conn').disabled=false;document.getElementById('disc').disabled=true;
 }
 navigator.serial&&navigator.serial.addEventListener('disconnect',()=>{if(port)disconnect()});

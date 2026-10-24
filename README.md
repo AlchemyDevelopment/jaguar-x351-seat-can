@@ -121,6 +121,23 @@ To try any value, send `M<hex>` over serial (e.g. `M30`). `M00` or `K` stops the
    - `n` toggle the network partner
    - `k` / `K` massage on / off, `M<hex>` massage with any byte-7 value
 
+## PC app, macros and Steam Deck
+
+`jagseat.py` controls the seat from a PC. Run it with no arguments for a small window with buttons, or give it one
+command so macros (AutoHotkey, Elgato Stream Deck, Steam Input, SimHub) can trigger it:
+
+```
+python jagseat.py                       # button window
+python jagseat.py status
+python jagseat.py massage on            # or: off, or a variant byte like 30
+python jagseat.py enable on             # or: off
+```
+
+It talks to the board over Wi-Fi (`--host`, default `jagseat.local`) or USB (`--usb COM5`, needs `pip install pyserial`).
+On Windows, `jagseat.local` can take about 3 s to resolve, so give macros the board's IP for instant response, e.g.
+`--host 192.168.12.241` or `set JAGSEAT_HOST=...`. It exits with code 1 if the board can't be reached. It only needs
+Python 3, so it also runs on a Steam Deck on the same network.
+
 ## USB dashboard (no Wi-Fi)
 
 Open **`dashboard.html`** in Chrome or Edge on the PC the ESP32 is plugged into. Click **Connect to ESP32** and pick
@@ -160,6 +177,7 @@ on/off, the massage variants and seat-enable on/off. The same actions are availa
 | `trigger_hunt.py` | Sends test payloads to groups of IDs and **stops at the first change** in the seat's status |
 | `massage_bisect.py` | Narrows a hit from `trigger_hunt.py` down to one ID, switching the massage off after each hit |
 | `hold_frame.py` | Keeps sending one frame while you test the switches |
+| `jagseat.py` | PC app: button window, or one-line commands for macros and Steam Deck |
 | `dashboard.html` | USB dashboard for massage and seat status. Open it in Chrome or Edge; no Wi-Fi needed |
 
 All scripts expect the board on `COM5`. Edit `PORT` at the top of each script if yours differs.
