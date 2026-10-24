@@ -63,8 +63,10 @@ class UsbLink:
 def describe(d):
     if not d.get("seat"):
         return "seat: no data (is the seat powered and the CAN wired?)"
+    prog = d.get("variant", "00")
+    massage = (f"running, program {prog}" if prog != "00" else "running, program unknown") if d["massage"] else "off"
     return (f"seat: connected | continuous movement: {'yes' if d['enabled'] else 'inch mode'} | "
-            f"massage: {'running' if d['massage'] else 'off'} | motor: {'running' if d['motor'] else 'idle'} | "
+            f"massage: {massage} | motor: {'running' if d['motor'] else 'idle'} | "
             f"firmware {d.get('fw', '?')}")
 
 

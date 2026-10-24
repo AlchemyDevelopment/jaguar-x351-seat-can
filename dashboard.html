@@ -8,7 +8,7 @@ h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:20px 0 8px;color:#aaa
 .on{color:#4ade80}.off{color:#888}.warn{color:#fbbf24}
 button{font-size:16px;padding:14px 10px;border:0;border-radius:10px;background:#2a2a2a;color:#eee;width:100%}
 button:active{background:#3a3a3a}button:disabled{opacity:.4}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.go{background:#14532d}.stop{background:#7f1d1d}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.grid button.act{background:#1d4ed8}.go{background:#14532d}.stop{background:#7f1d1d}
 small{color:#888}#log{background:#0a0a0a;color:#9ca3af;font:12px monospace;height:140px;overflow:auto;padding:8px;border-radius:8px;white-space:pre-wrap}
 </style></head><body>
 <h1>Jaguar seat (USB)</h1>
@@ -20,7 +20,7 @@ small{color:#888}#log{background:#0a0a0a;color:#9ca3af;font:12px monospace;heigh
 <span>Continuous movement</span><b id="en">-</b>
 <span>Massage</span><b id="ms">-</b>
 <span>Motor</span><b id="mo">-</b>
-<span>Massage variant sent</span><b id="va">-</b>
+<span>Massage program</span><b id="va">-</b>
 <span>Firmware</span><b id="fw">-</b>
 <span>Home Wi-Fi</span><b id="ip">-</b>
 </div>
@@ -31,7 +31,7 @@ small{color:#888}#log{background:#0a0a0a;color:#9ca3af;font:12px monospace;heigh
 <button onclick="m('10')">10</button><button onclick="m('30')">30</button><button onclick="m('50')">50</button><button onclick="m('90')">90</button>
 <button onclick="m('11')">11</button><button onclick="m('12')">12</button><button onclick="m('14')">14</button><button onclick="m('18')">18</button>
 </div>
-<p><small>Variant effects aren't identified yet. Note what each one feels like.</small></p>
+<p><small>The seat only reports massage on/off, so the program shown is the last one this board started. Variant effects aren't identified yet. Note what each one feels like.</small></p>
 <h2>Seat enable</h2>
 <div class="row"><button onclick="e(1)">Enable</button><button onclick="e(0)">Disable</button></div>
 <p><small>Disable stops the 0x0B8 frame. The seat stays enabled until it loses power.</small></p>
@@ -53,7 +53,9 @@ function show(d){
  s('en',d.seat?(d.enabled?'yes':'inch mode'):'-',d.enabled?'on':'off');
  s('ms',d.seat?(d.massage?'running':'off'):'-',d.massage?'on':'off');
  s('mo',d.seat?(d.motor?'running':'idle'):'-',d.motor?'on':'off');
- s('va',d.variant==='00'?'off (00)':d.variant,d.massage?'on':'off');
+ var run=d.seat&&d.massage,known=d.variant&&d.variant!=='00';
+ s('va',!d.seat?'-':!run?'off':known?d.variant:'unknown (started before the ESP32 restarted)',run?'on':'off');
+ document.querySelectorAll('.grid button').forEach(b=>b.classList.toggle('act',run&&known&&b.textContent===d.variant));
  s('fw',d.fw,'');
  s('ip',d.ip||'not connected',d.ip?'on':'off');
 }
