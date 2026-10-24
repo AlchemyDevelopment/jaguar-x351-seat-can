@@ -123,6 +123,9 @@ To try any value, send `M<hex>` over serial (e.g. `M30`). `M00` or `K` stops the
 
 ## PC app, macros and Steam Deck
 
+**Easiest:** double-click **`JagSeat.bat`** in the project folder to open the window (edit the IP inside if the board's
+address changes). The cycle mode runs on the board itself, so it keeps going after you close the app.
+
 `jagseat.py` controls the seat from a PC. Run it with no arguments for a small window with buttons, or give it one
 command so macros (AutoHotkey, Elgato Stream Deck, Steam Input, SimHub) can trigger it:
 
@@ -130,6 +133,7 @@ command so macros (AutoHotkey, Elgato Stream Deck, Steam Input, SimHub) can trig
 python jagseat.py                       # button window
 python jagseat.py status
 python jagseat.py massage on            # or: off, or a variant byte like 30
+python jagseat.py cycle 30               # step through all 8 programs every 30 s; cycle off stops
 python jagseat.py enable on             # or: off
 ```
 
@@ -140,7 +144,8 @@ Python 3, so it also runs on a Steam Deck on the same network.
 
 ## USB dashboard (no Wi-Fi)
 
-Open **`dashboard.html`** in Chrome or Edge on the PC the ESP32 is plugged into. Click **Connect to ESP32** and pick
+The web page and the USB dashboard are the same file: `dashboard.html`. After editing it, run `python make_page.py`
+to embed it in the firmware, then flash. Open **`dashboard.html`** in Chrome or Edge on the PC the ESP32 is plugged into. Click **Connect to ESP32** and pick
 its COM port. The page talks to the board over USB (Web Serial), so you don't need to join any Wi-Fi network. It shows the
 same live status and buttons as the Wi-Fi page, plus the serial log. Close the Arduino serial monitor and the Python
 scripts first, because only one program can use the COM port at a time.
@@ -177,6 +182,8 @@ on/off, the massage variants and seat-enable on/off. The same actions are availa
 | `trigger_hunt.py` | Sends test payloads to groups of IDs and **stops at the first change** in the seat's status |
 | `massage_bisect.py` | Narrows a hit from `trigger_hunt.py` down to one ID, switching the massage off after each hit |
 | `hold_frame.py` | Keeps sending one frame while you test the switches |
+| `JagSeat.bat` | Double-click launcher for the PC app window |
+| `make_page.py` | Embeds `dashboard.html` in the firmware (`JagSeatCan/page_html.h`) |
 | `jagseat.py` | PC app: button window, or one-line commands for macros and Steam Deck |
 | `dashboard.html` | USB dashboard for massage and seat status. Open it in Chrome or Edge; no Wi-Fi needed |
 

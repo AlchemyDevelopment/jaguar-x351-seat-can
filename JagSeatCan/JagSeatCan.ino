@@ -36,7 +36,7 @@
 #define WIFI_PASS "jaguarseat"  // at least 8 characters; change before sharing your rig
 static WebServer web(80);
 // shown on the web page and USB dashboard; bump it whenever you flash a change
-#define FW_VERSION "1.4"
+#define FW_VERSION "1.5"
 static const char FW_BUILD[] = FW_VERSION " (built " __DATE__ " " __TIME__ ")";
 static uint8_t last4FB6 = 0, last4FB7 = 0;
 static uint32_t last4FBMs = 0;
@@ -56,6 +56,11 @@ static bool busOffRetry = false;
 static int massageBurst = 0;  // frames left to send
 static uint8_t massageByte7 = 0;
 static uint32_t lastMassage = 0;
+// cycle mode: the board itself steps through the massage programs on a timer (no PC or phone needed)
+static const uint8_t PROGRAMS[] = {0x10, 0x30, 0x50, 0x90, 0x11, 0x12, 0x14, 0x18};
+static const int N_PROGRAMS = sizeof(PROGRAMS);
+static uint32_t cycleMs = 0, lastCycle = 0;  // cycleMs 0 = cycle off
+static int cycleIdx = 0;
 
 static bool txIgnition = false;
 static bool txDoorFrame = false;
@@ -257,13 +262,27 @@ static void startAuto() {
 
 static void statusJson(char *buf, size_t len);
 
+static void setMassage(uint8_t v, bool fromCycle = false) {
+  ensureNormal();
+  massageByte7 = v;
+  massageBurst = 20;  // 20 x 50 ms = 1 s
+  if (!fromCycle) cycleMs = 0;  // picking a program or switching off ends the cycle
+}
+
+static void startCycle(uint32_t secs) {
+  if (secs == 0) { cycleMs = 0; return; }
+  cycleMs = max<uint32_t>(secs, 5) * 1000;
+  cycleIdx = 0;
+  lastCycle = millis();
+  setMassage(PROGRAMS[0], true);
+  Serial.printf(">> massage cycle every %lu s\n", (unsigned long)(cycleMs / 1000));
+}
+
 static void handleCmd(char c) {
   switch (c) {
     case 'k':
     case 'K':
-      ensureNormal();
-      massageByte7 = (c == 'k') ? 0x10 : 0x00;
-      massageBurst = 20;  // 20 x 50 ms = 1 s
+      setMassage(c == 'k' ? 0x10 : 0x00);
       Serial.printf(">> massage %s (0x4CB byte7=0x%02X for 1 s)\n", c == 'k' ? "ON" : "OFF", massageByte7);
       break;
     case 'e':
@@ -317,67 +336,18 @@ static void handleCmd(char c) {
   }
 }
 
-static const char PAGE[] PROGMEM = R"HTML(<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>JagSeat</title>
-<style>
-body{font-family:system-ui,sans-serif;background:#111;color:#eee;margin:0;padding:16px;max-width:520px}
-h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:20px 0 8px;color:#aaa;text-transform:uppercase;letter-spacing:.05em}
-.st{display:grid;grid-template-columns:1fr auto;gap:6px 12px;background:#1c1c1c;padding:12px;border-radius:10px}
-.on{color:#4ade80}.off{color:#888}.warn{color:#fbbf24}
-button{font-size:16px;padding:14px 10px;border:0;border-radius:10px;background:#2a2a2a;color:#eee;width:100%}
-button:active{background:#3a3a3a}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.grid button.act{background:#1d4ed8}.go{background:#14532d}.stop{background:#7f1d1d}
-small{color:#888}
-</style></head><body>
-<h1>Jaguar seat</h1>
-<div class="st">
-<span>Seat link</span><b id="link">-</b>
-<span>Continuous movement</span><b id="en">-</b>
-<span>Massage</span><b id="ms">-</b>
-<span>Motor</span><b id="mo">-</b>
-<span>Massage program</span><b id="va">-</b>
-<span>Firmware</span><b id="fw">-</b>
-<span>Home Wi-Fi</span><b id="ip">-</b>
-</div>
-<h2>Massage</h2>
-<div class="row"><button class="go" onclick="m('10')">On</button><button class="stop" onclick="m('00')">Off</button></div>
-<h2>Massage variants</h2>
-<div class="grid">
-<button onclick="m('10')">10</button><button onclick="m('30')">30</button><button onclick="m('50')">50</button><button onclick="m('90')">90</button>
-<button onclick="m('11')">11</button><button onclick="m('12')">12</button><button onclick="m('14')">14</button><button onclick="m('18')">18</button>
-</div>
-<p><small>The seat only reports massage on/off, so the program shown is the last one this board started. Variant effects aren't identified yet. Note what each one feels like.</small></p>
-<h2>Seat enable</h2>
-<div class="row"><button onclick="e(1)">Enable</button><button onclick="e(0)">Disable</button></div>
-<p><small>Disable stops the 0x0B8 frame. The seat stays enabled until it loses power.</small></p>
-<script>
-function q(u){return fetch(u).then(r=>r.json()).then(show).catch(()=>{})}
-function m(v){q('/api/massage?v='+v)}
-function e(v){q('/api/enable?on='+v)}
-function s(id,t,c){var x=document.getElementById(id);x.textContent=t;x.className=c}
-function show(d){
- s('link',d.seat?'connected':'no data','' + (d.seat?'on':'warn'));
- s('en',d.seat?(d.enabled?'yes':'inch mode'):'-',d.enabled?'on':'off');
- s('ms',d.seat?(d.massage?'running':'off'):'-',d.massage?'on':'off');
- s('mo',d.seat?(d.motor?'running':'idle'):'-',d.motor?'on':'off');
- var run=d.seat&&d.massage,known=d.variant&&d.variant!=='00';
- s('va',!d.seat?'-':!run?'off':known?d.variant:'unknown (started before the ESP32 restarted)',run?'on':'off');
- document.querySelectorAll('.grid button').forEach(b=>b.classList.toggle('act',run&&known&&b.textContent===d.variant));
- s('fw',d.fw,'');
- s('ip',d.ip||'not connected',d.ip?'on':'off');
-}
-q('/api/status');setInterval(()=>q('/api/status'),1000);
-</script></body></html>)HTML";
+#include "page_html.h"  // generated from dashboard.html by make_page.py; edit the HTML, then run it
 
 static void statusJson(char *buf, size_t len) {
   bool seat = last4FBMs && millis() - last4FBMs < 2000;
   snprintf(buf, len,
            "{\"seat\":%s,\"enabled\":%s,\"massage\":%s,\"motor\":%s,\"tx_enable\":%s,"
-           "\"fw\":\"%s\",\"variant\":\"%02X\",\"ip\":\"%s\"}",
+           "\"fw\":\"%s\",\"variant\":\"%02X\",\"ip\":\"%s\",\"cycle\":%lu,\"cycle_next\":%lu}",
            seat ? "true" : "false", (seat && !(last4FB6 & 0x04)) ? "true" : "false",
            (seat && (last4FB6 & 0x01)) ? "true" : "false", (seat && (last4FB7 & 0x01)) ? "true" : "false",
            txSeatEnable ? "true" : "false", FW_BUILD, massageByte7,
-           WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "");
+           WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "", (unsigned long)(cycleMs / 1000),
+           (unsigned long)(cycleMs ? (cycleMs - min(cycleMs, millis() - lastCycle)) / 1000 : 0));
 }
 
 static void sendStatus() {
@@ -399,9 +369,11 @@ static void startWeb() {
   web.on("/", [] { web.send_P(200, "text/html", PAGE); });
   web.on("/api/status", sendStatus);
   web.on("/api/massage", [] {
-    ensureNormal();
-    massageByte7 = (uint8_t)strtoul(web.arg("v").c_str(), nullptr, 16);
-    massageBurst = 20;
+    setMassage((uint8_t)strtoul(web.arg("v").c_str(), nullptr, 16));
+    sendStatus();
+  });
+  web.on("/api/cycle", [] {
+    startCycle(web.arg("s").toInt());
     sendStatus();
   });
   web.on("/api/enable", [] {
@@ -419,7 +391,7 @@ void setup() {
   delay(1500);
   Serial.println("\nJagSeatCan - X351 seat MS-CAN bench emulator (125k, TX15/RX16)");
   Serial.printf("firmware %s\n", FW_BUILD);
-  Serial.println("cmds: e=seat-enable k/K=massage on/off i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status j=json-status p=ids v=verbose");
+  Serial.println("cmds: e=seat-enable k/K=massage on/off M<hex>=program C<secs>=cycle i=ignition d=door-open a=door-frame n=netmgmt x=stop s=status j=json-status p=ids v=verbose");
   startDriver(true);
   if (AUTO_RUN) startAuto();
   startWeb();
@@ -446,15 +418,18 @@ void loop() {
   static int lineLen = 0;
   while (Serial.available()) {
     char c = (char)Serial.read();
-    if (lineLen == 0 && c != 't' && c != 'M') { handleCmd(c); continue; }
+    if (lineLen == 0 && c != 't' && c != 'M' && c != 'C') { handleCmd(c); continue; }
     if (c == '\n' || c == '\r') {
       line[lineLen] = 0;
       lineLen = 0;
       if (line[0] == 'M') {  // "M<hex>": massage with any byte7 value, e.g. M30 (0x10 = plain on, 00 = off)
-        ensureNormal();
-        massageByte7 = (uint8_t)strtoul(line + 1, nullptr, 16);
-        massageBurst = 20;
+        setMassage((uint8_t)strtoul(line + 1, nullptr, 16));
         Serial.printf(">> massage byte7=0x%02X for 1 s\n", massageByte7);
+        continue;
+      }
+      if (line[0] == 'C') {  // "C<secs>": cycle the massage programs every <secs> s, C0 = stop cycling
+        startCycle(strtoul(line + 1, nullptr, 10));
+        if (!cycleMs) Serial.println(">> massage cycle off");
         continue;
       }
       char *p = line + 1;
@@ -501,6 +476,11 @@ void loop() {
   if (busOffRetry && now - busOffAt >= 3000) { busOffRetry = false; startAuto(); }
   if (!listenOnly) {
     if (txSeatEnable && now - lastSeatEnable >= 50) { lastSeatEnable = now; sendFrame(0x0B8, SEAT_ENABLE); }
+    if (cycleMs && now - lastCycle >= cycleMs) {
+      lastCycle = now;
+      cycleIdx = (cycleIdx + 1) % N_PROGRAMS;
+      setMassage(PROGRAMS[cycleIdx], true);
+    }
     if (massageBurst > 0 && now - lastMassage >= 50) {
       lastMassage = now;
       massageBurst--;

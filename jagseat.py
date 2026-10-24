@@ -5,6 +5,7 @@ Talks to the ESP32 over Wi-Fi (its /api endpoints) by default, or over USB with 
   python jagseat.py                      open the button window
   python jagseat.py status               print seat status
   python jagseat.py massage on|off|30    massage on / off / any variant byte
+  python jagseat.py cycle 30|off         cycle through all programs every 30 s (runs on the board) / stop
   python jagseat.py enable on|off        seat-enable 0x0B8 on / off
 
   --host jagseat.local   board address on Wi-Fi (or set JAGSEAT_HOST, e.g. 192.168.12.241)
@@ -12,13 +13,17 @@ Talks to the ESP32 over Wi-Fi (its /api endpoints) by default, or over USB with 
 
 Exit code is 0 on success, 1 if the board couldn't be reached, so macros can tell.
 """
-import argparse, json, os, sys, time, urllib.request
+import argparse, json, os, queue, socket, sys, threading, time, urllib.request
 
 VARIANTS = ["10", "30", "50", "90", "11", "12", "14", "18"]
 
 
 class WifiLink:
     def __init__(self, host):
+        try:
+            host = socket.gethostbyname(host)  # resolve jagseat.local once; Windows mDNS lookups take ~3 s each
+        except OSError:
+            pass
         self.base = f"http://{host}"
 
     def call(self, path):
@@ -30,6 +35,9 @@ class WifiLink:
 
     def massage(self, v):
         return self.call(f"/api/massage?v={v}")
+
+    def cycle(self, secs):
+        return self.call(f"/api/cycle?s={secs}")
 
     def enable(self, on):
         return self.call(f"/api/enable?on={1 if on else 0}")
@@ -54,6 +62,10 @@ class UsbLink:
         self.ser.write(f"M{v}\n".encode())
         return self.status()
 
+    def cycle(self, secs):
+        self.ser.write(f"C{secs}\n".encode())
+        return self.status()
+
     def enable(self, on):
         if self.status().get("tx_enable") != on:
             self.ser.write(b"e\n")  # 'e' toggles, so only send it when the state differs
@@ -64,10 +76,16 @@ def describe(d):
     if not d.get("seat"):
         return "seat: no data (is the seat powered and the CAN wired?)"
     prog = d.get("variant", "00")
-    massage = (f"running, program {prog}" if prog != "00" else "running, program unknown") if d["massage"] else "off"
+    massage = (f"running, program {prog_name(prog)}" if prog != "00" else "running, program unknown") if d["massage"] else "off"
+    if d["massage"] and d.get("cycle"):
+        massage += f" (cycling every {d['cycle']} s, next in {d.get('cycle_next', '?')} s)"
     return (f"seat: connected | continuous movement: {'yes' if d['enabled'] else 'inch mode'} | "
             f"massage: {massage} | motor: {'running' if d['motor'] else 'idle'} | "
             f"firmware {d.get('fw', '?')}")
+
+
+def prog_name(v):
+    return f"P{VARIANTS.index(v) + 1} ({v})" if v in VARIANTS else v
 
 
 def on_off(word):
@@ -85,6 +103,9 @@ def run_cli(link, args):
         v = args.value or "on"
         v = {"on": "10", "off": "00"}.get(v.lower(), v)
         d = link.massage(f"{int(v, 16):02X}")
+    elif args.cmd == "cycle":
+        v = (args.value or "30").lower()
+        d = link.cycle(0 if v in ("off", "0", "stop") else int(v))
     elif args.cmd == "enable":
         d = link.enable(on_off(args.value or "on"))
     else:
@@ -95,43 +116,132 @@ def run_cli(link, args):
 def run_gui(link):
     import tkinter as tk
 
+    BG, CARD, LINE, TX, MUTE = "#0b0c0d", "#17191c", "#2a2e33", "#ece8e1", "#8d8a85"
+    GOLD, GOLD2, GREEN, AMBER, ACT = "#c9a45c", "#e6c88a", "#3fb97a", "#e0a43a", "#2a2418"
+    UI, SERIF = ("Segoe UI", 11), ("Georgia", 20)
     root = tk.Tk()
     root.title("JagSeat")
-    root.configure(bg="#111")
-    st = tk.StringVar(value="connecting...")
-    tk.Label(root, textvariable=st, bg="#111", fg="#eee", justify="left", wraplength=360,
-             font=("Segoe UI", 11)).pack(padx=12, pady=10, anchor="w")
+    root.configure(bg=BG, padx=16, pady=14)
+    root.resizable(False, False)
+    state = {"d": {}}
+    results = queue.Queue()
 
-    def act(fn):
-        try:
-            st.set(describe(fn()))
-        except Exception as e:
-            st.set(f"board not reachable: {e}")
+    def work(fn):  # board calls run off the UI thread so the window never freezes
+        def go():
+            try:
+                results.put(fn())
+            except Exception as e:
+                results.put(e)
+        threading.Thread(target=go, daemon=True).start()
 
-    def row(buttons):
-        f = tk.Frame(root, bg="#111")
-        f.pack(padx=12, pady=4, fill="x")
-        for text, fn, color in buttons:
-            tk.Button(f, text=text, command=lambda fn=fn: act(fn), bg=color, fg="#eee", relief="flat",
-                      font=("Segoe UI", 11), padx=8, pady=8).pack(side="left", expand=True, fill="x", padx=3)
+    def button(parent, text, fn, **kw):
+        return tk.Button(parent, text=text, command=lambda: work(fn), bg=CARD, fg=TX, activebackground=LINE,
+                         activeforeground=TX, relief="flat", bd=0, highlightthickness=1, highlightbackground=LINE,
+                         font=UI, padx=10, pady=9, cursor="hand2", **kw)
 
-    row([("Massage on", lambda: link.massage("10"), "#14532d"), ("Massage off", lambda: link.massage("00"), "#7f1d1d")])
-    row([(v, lambda v=v: link.massage(v), "#2a2a2a") for v in VARIANTS[:4]])
-    row([(v, lambda v=v: link.massage(v), "#2a2a2a") for v in VARIANTS[4:]])
-    row([("Enable", lambda: link.enable(True), "#2a2a2a"), ("Disable", lambda: link.enable(False), "#2a2a2a")])
+    def card(title):
+        f = tk.Frame(root, bg=CARD, highlightthickness=1, highlightbackground=LINE, padx=12, pady=10)
+        f.pack(fill="x", pady=6)
+        tk.Label(f, text=title.upper(), bg=CARD, fg=MUTE, font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 6))
+        return f
+
+    def toggle_massage():
+        d = state["d"]
+        v = d.get("variant", "00")
+        return link.massage("00" if d.get("massage") else (v if v != "00" else "10"))
+
+    head = tk.Frame(root, bg=BG)
+    head.pack(fill="x", pady=(0, 6))
+    tk.Label(head, text="Jaguar", bg=BG, fg=TX, font=SERIF).pack(side="left")
+    tk.Label(head, text=" Seat", bg=BG, fg=GOLD, font=SERIF).pack(side="left")
+    link_lbl = tk.Label(head, text="connecting", bg=BG, fg=MUTE, font=UI)
+    link_lbl.pack(side="right")
+
+    f = card("Massage")
+    top = tk.Frame(f, bg=CARD)
+    top.pack(fill="x")
+    pwr = button(top, "Start", toggle_massage, width=8)
+    pwr.pack(side="left")
+    now = tk.Label(top, text="-", bg=CARD, fg=TX, font=("Georgia", 15), anchor="w")
+    now.pack(side="left", padx=12, fill="x")
+    sub = tk.Label(f, text="", bg=CARD, fg=MUTE, font=("Segoe UI", 9), anchor="w")
+    sub.pack(fill="x", pady=(6, 0))
+
+    f = card("Programs")
+    grid = tk.Frame(f, bg=CARD)
+    grid.pack(fill="x")
+    progs = {}
+    for i, v in enumerate(VARIANTS):
+        b = button(grid, f"P{i + 1}\n{v}", lambda v=v: link.massage(v), width=6)
+        b.grid(row=i // 4, column=i % 4, padx=3, pady=3, sticky="ew")
+        grid.columnconfigure(i % 4, weight=1)
+        progs[v] = b
+
+    f = card("Cycle all programs")
+    crow = tk.Frame(f, bg=CARD)
+    crow.pack(fill="x")
+    secs = tk.StringVar(value="30")
+    opt = tk.OptionMenu(crow, secs, "15", "30", "60", "120", "300")
+    opt.configure(bg=CARD, fg=TX, activebackground=LINE, activeforeground=TX, relief="flat", highlightthickness=1,
+                  highlightbackground=LINE, font=UI, width=4)
+    opt["menu"].configure(bg=CARD, fg=TX, font=UI)
+    opt.pack(side="left")
+    tk.Label(crow, text="s", bg=CARD, fg=MUTE, font=UI).pack(side="left", padx=(4, 10))
+    cyc = button(crow, "Start cycle", lambda: link.cycle(0 if state["d"].get("cycle") else int(secs.get())))
+    cyc.pack(side="left", fill="x", expand=True)
+
+    f = card("Seat")
+    srow = tk.Frame(f, bg=CARD)
+    srow.pack(fill="x")
+    seat = tk.Label(srow, text="-", bg=CARD, fg=MUTE, font=UI, anchor="w")
+    seat.pack(side="left", fill="x", expand=True)
+    button(srow, "Enable", lambda: link.enable(True)).pack(side="left", padx=3)
+    button(srow, "Disable", lambda: link.enable(False)).pack(side="left")
+    fw = tk.Label(root, text="", bg=BG, fg=MUTE, font=("Segoe UI", 8))
+    fw.pack(anchor="w", pady=(6, 0))
+
+    def show(d):
+        if isinstance(d, Exception):
+            link_lbl.configure(text="board offline", fg=AMBER)
+            return
+        state["d"] = d
+        ok = d.get("seat")
+        run = ok and d.get("massage")
+        v = d.get("variant", "00")
+        link_lbl.configure(text="seat connected" if ok else "no seat data", fg=GREEN if ok else AMBER)
+        pwr.configure(text="Stop" if run else "Start", fg=GOLD2 if run else TX, highlightbackground=GOLD if run else LINE)
+        now.configure(text="-" if not ok else "Off" if not run else
+                      f"Program {VARIANTS.index(v) + 1}" if v in VARIANTS else "Running")
+        sub.configure(text=f"Cycling every {d['cycle']} s, next in {d.get('cycle_next', '?')} s" if run and d.get("cycle")
+                      else f"0x4CB byte7 = {v}" if run and v != "00"
+                      else "Program unknown (started before the ESP32 restarted)" if run
+                      else "Pick a program or start the cycle")
+        for pv, b in progs.items():
+            on = bool(run and pv == v)
+            b.configure(bg=ACT if on else CARD, fg=GOLD2 if on else TX, highlightbackground=GOLD if on else LINE)
+        cyc.configure(text="Stop cycle" if d.get("cycle") else "Start cycle", fg=GOLD2 if d.get("cycle") else TX)
+        seat.configure(text="-" if not ok else "continuous movement" if d.get("enabled") else "inch mode",
+                       fg=GREEN if ok and d.get("enabled") else AMBER if ok else MUTE)
+        fw.configure(text=f"firmware {d.get('fw', '?')}" + (f"   |   {d['ip']}" if d.get("ip") else ""))
+
+    def pump():
+        while not results.empty():
+            show(results.get())
+        root.after(100, pump)
 
     def poll():
-        act(link.status)
-        root.after(1500, poll)
+        work(link.status)
+        root.after(1000, poll)
 
+    pump()
     poll()
     root.mainloop()
 
 
 def main():
     p = argparse.ArgumentParser(description="Control the Jaguar seat ESP32 from the PC.")
-    p.add_argument("cmd", nargs="?", help="status | massage | enable (leave out for the window)")
-    p.add_argument("value", nargs="?", help="on | off | variant byte like 30")
+    p.add_argument("cmd", nargs="?", help="status | massage | cycle | enable (leave out for the window)")
+    p.add_argument("value", nargs="?", help="on | off | variant byte like 30 | cycle seconds")
     p.add_argument("--host", default=os.environ.get("JAGSEAT_HOST", "jagseat.local"))
     p.add_argument("--usb", metavar="PORT", help="use USB serial (e.g. COM5) instead of Wi-Fi")
     args = p.parse_args()
